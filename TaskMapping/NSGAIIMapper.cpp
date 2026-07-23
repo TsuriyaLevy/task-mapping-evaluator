@@ -2,6 +2,7 @@
 #include "Evaluation.h"
 #include "TopologicalSorting.h"
 #include "GreedyMapper.h"
+#include <algorithm>
 
 #define NO_NSGA_LOG
 

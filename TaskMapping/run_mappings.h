@@ -8,9 +8,12 @@
 #include "NSGAIIMapper.h"
 #include "HEFTMapper.h"
 #include "PEFTMapper.h"
+
+#ifdef ENABLE_GUROBI
 #include "ZhouLiuMILPMapper.h"
 #include "DeviceBasedMILPMapper.h"
 #include "TimeBasedMILPMapper.h"
+#endif
 
 #include "Evaluation.h"
 #include "DrawGraph.h"
@@ -180,18 +183,29 @@ void run_mappings(System const& system, TestRun& test_run, std::vector<MappingTy
             case MappingType::PEFT:
                 run_func("PEFTMapping", PEFTMapper());
                 break;
-            case MappingType::ZhouLiu:
-                run_func("ZhouLiuMapping", ZhouLiuMILPMapper());
-                break;
-            case MappingType::DeviceMILP:
-                run_func("DeviceBasedMapping", DeviceBasedMILPMapper());
-                break;
-            case MappingType::TimeMILP:
-                run_func("TimeBasedMapping", TimeBasedMILPMapper());
-                break;
-            case MappingType::TimeMILPStream:
-                run_func("TimeBasedMappingStream", TimeBasedMILPMapper(true));
-                break;
+#ifdef ENABLE_GUROBI
+			case MappingType::ZhouLiu:
+				run_func("ZhouLiuMapping", ZhouLiuMILPMapper());
+				break;
+			case MappingType::DeviceMILP:
+				run_func("DeviceBasedMapping", DeviceBasedMILPMapper());
+				break;
+			case MappingType::TimeMILP:
+				run_func("TimeBasedMapping", TimeBasedMILPMapper());
+				break;
+			case MappingType::TimeMILPStream:
+				run_func("TimeBasedMappingStream", TimeBasedMILPMapper(true));
+				break;
+#else
+			case MappingType::ZhouLiu:
+			case MappingType::DeviceMILP:
+			case MappingType::TimeMILP:
+			case MappingType::TimeMILPStream:
+				std::cerr
+					<< "The selected MILP mapper requires a build with Gurobi support."
+					<< std::endl;
+				break;
+#endif
         }
     }
 
@@ -201,6 +215,31 @@ void run_mappings(System const& system, TestRun& test_run, std::vector<MappingTy
 	//run_mapping_with_schedule("PEFTMappingSchedule", system, PEFTMapper(), test_run, draw_results, enable_export);
 }
 
-void run_default_mappings(System const& system, TestRun& test_run, bool draw_results, bool enable_export = false) {
-    run_mappings(system, test_run, {MappingType::CPU, MappingType::SeriesParallel, MappingType::SPFirstFit, MappingType::SingleNode, MappingType::SNFirstFit, MappingType::SimulatedAnnealing, MappingType::NSGAII, MappingType::HEFT, MappingType::PEFT, MappingType::DeviceMILP}, draw_results, enable_export);
+//void run_default_mappings(System const& system, TestRun& test_run, bool draw_results, bool enable_export = false) {
+//    run_mappings(system, test_run, {MappingType::CPU, MappingType::SeriesParallel, MappingType::SPFirstFit, MappingType::SingleNode, MappingType::SNFirstFit, MappingType::SimulatedAnnealing, MappingType::NSGAII, MappingType::HEFT, MappingType::PEFT, MappingType::DeviceMILP}, draw_results, enable_export);
+//}
+
+void run_default_mappings(
+	System const& system,
+	TestRun& test_run,
+	bool draw_results,
+	bool enable_export = false)
+{
+	run_mappings(
+		system,
+		test_run,
+		{
+			MappingType::CPU,
+			MappingType::SeriesParallel,
+			MappingType::SPFirstFit,
+			MappingType::SingleNode,
+			MappingType::SNFirstFit,
+			MappingType::SimulatedAnnealing,
+			MappingType::NSGAII,
+			MappingType::HEFT,
+			MappingType::PEFT
+		},
+		draw_results,
+		enable_export
+	);
 }
