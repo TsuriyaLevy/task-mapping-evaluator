@@ -9,6 +9,9 @@
 #include "HEFTMapper.h"
 #include "PEFTMapper.h"
 
+#include "Replication/ReplicationMapper.h"
+#include "Replication/ReplicationSystem.h"
+
 #ifdef ENABLE_GUROBI
 #include "ZhouLiuMILPMapper.h"
 #include "DeviceBasedMILPMapper.h"
@@ -26,14 +29,15 @@
 #include <unordered_set>
 
 enum class MappingType {
-    CPU, GPU, FPGA,
-    SingleNode, SNThreshold, SNFirstFit,
-    SeriesParallel, SPThreshold, SPFirstFit,
-    DeviceMILP, TimeMILP, TimeMILPStream,
+	CPU, GPU, FPGA,
+	SingleNode, SNThreshold, SNFirstFit,
+	SeriesParallel, SPThreshold, SPFirstFit,
+	DeviceMILP, TimeMILP, TimeMILPStream,
 	SimulatedAnnealing,
 	NSGAII, NSGAIISimple,
-    ZhouLiu,
-    HEFT, PEFT
+	ZhouLiu,
+	HEFT, PEFT,
+	SeriesParallelReplication
 };
 
 void run_mapping(std::string const& label, System const& system, Mapper const& mapper, TestRun& test_run, bool draw = true, bool enable_export = false) {
@@ -52,7 +56,7 @@ void run_mapping(std::string const& label, System const& system, Mapper const& m
     }
 
 	MappingEvaluator eval(system, true);
-	Time result = eval.evaluate_mapping_with_check(mapping, 100);
+	Time result = eval.evaluate_mapping_with_check(mapping, 1);
 
 	if (result == -1) {
 		std::cerr << "No mapping found for " << label << std::endl;
@@ -62,6 +66,42 @@ void run_mapping(std::string const& label, System const& system, Mapper const& m
 	if (draw) draw_graph(system.get_task_graph(), mapping, label, eval.get_log());
 	if (enable_export) export_graph(system.get_task_graph(), mapping, label);
 	test_run.push_back({ label, result, std::chrono::duration_cast<std::chrono::milliseconds>(end - begin), false });
+}
+
+void run_replication_mapping(std::string const& label, System const& system, ReplicationMapper const& mapper, TestRun& test_run, bool draw = true, bool enable_export = false) {
+	std::cout << "Computing " << label << "...";
+
+	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+	ReplicationSolution solution = mapper.get_task_mapping(system);
+	std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+
+	std::cout << " finished!" << std::endl;
+
+	ReplicationSystem replication_system(std::move(solution.graph), system.get_platform());
+
+	MappingEvaluator eval(replication_system, true);
+	Time result = eval.evaluate_mapping_with_check(solution.mapping, 1);
+
+	if (result == -1) {
+		std::cerr << "No mapping found for " << label << std::endl;
+		return;
+	}
+
+	if (draw) {
+		draw_graph(replication_system.get_task_graph(), solution.mapping, label, eval.get_log());
+	}
+
+	if (enable_export) {
+		export_graph(replication_system.get_task_graph(), solution.mapping, label);
+	}
+
+	test_run.push_back({
+		label,
+		result,
+		std::chrono::duration_cast<std::chrono::milliseconds>(end - begin),
+		false,
+		solution.replication_count
+		});
 }
 
 void run_mapping_with_schedule(std::string const& label, System const& system, TaskMapperWithSchedule const& mapper, TestRun& test_run, bool draw = true, bool enable_export = false) {
@@ -183,6 +223,16 @@ void run_mappings(System const& system, TestRun& test_run, std::vector<MappingTy
             case MappingType::PEFT:
                 run_func("PEFTMapping", PEFTMapper());
                 break;
+			case MappingType::SeriesParallelReplication:
+				run_replication_mapping(
+					"SeriesParallelReplicationMapping",
+					system,
+					ReplicationMapper(),
+					test_run,
+					draw_results,
+					enable_export
+				);
+				break;
 #ifdef ENABLE_GUROBI
 			case MappingType::ZhouLiu:
 				run_func("ZhouLiuMapping", ZhouLiuMILPMapper());

@@ -195,6 +195,15 @@
     <ClInclude Include="NSGAIIMapper.h" />
     <ClInclude Include="PathBasedMapper.h" />
     <ClInclude Include="PEFTMapper.h" />
+    <ClInclude Include="ReplicationEvaluation.h" />
+    <ClInclude Include="Replication\MultiMapping.h" />
+    <ClInclude Include="Replication\ReplicationEvaluation.h" />
+    <ClInclude Include="Replication\ReplicationMapper.h" />
+    <ClInclude Include="Replication\ReplicationPolicies.h" />
+    <ClInclude Include="Replication\ReplicationResultHandling.h" />
+    <ClInclude Include="Replication\ReplicationSystem.h" />
+    <ClInclude Include="Replication\ReplicationTopologicalSorting.h" />
+    <ClInclude Include="Replication\ReplicationUtility.h" />
     <ClInclude Include="run_mappings.h" />
     <ClInclude Include="GreedyMapper.h" />
     <ClInclude Include="Mapping.h" />

@@ -70,6 +70,7 @@ public:
 	Percent const& get_parallelizability() const { return parallelizability; }
 	ScaleFactor const& get_complexity() const { return complexity; }
 	ScaleFactor const& get_streamability() const { return streamability; }
+	SizeFuncPtr const& get_size_func() const { return size_func; }
 	Area get_area_requirement() const { return area == 0 ? complexity : area; }
 
 	std::string get_label() const {

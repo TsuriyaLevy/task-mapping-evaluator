@@ -37,6 +37,7 @@ struct TestResult {
 	Time objective;
 	std::chrono::milliseconds runtime_ms;
     bool timeout;
+    size_t replication_count = 0;
 };
 
 typedef std::vector<TestResult> TestRun;
