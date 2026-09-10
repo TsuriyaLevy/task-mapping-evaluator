@@ -14,7 +14,11 @@
 struct ReplicationSolution {
     TaskGraph graph;
     Mapping mapping;
+    MultiMapping multi_mapping;
+
+    size_t move_count = 0;
     size_t replication_count = 0;
+    size_t final_replica_count = 0;
 };
 
 
@@ -99,9 +103,11 @@ public:
         }
 
 
-        return {
-            std::move(new_graph),
-            std::move(new_mapping)
-        };
+        ReplicationSolution solution;
+        solution.graph = std::move(new_graph);
+        solution.mapping = std::move(new_mapping);
+		solution.multi_mapping = multi_mapping;
+
+        return solution;
     }
 };

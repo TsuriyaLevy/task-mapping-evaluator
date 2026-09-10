@@ -13,7 +13,12 @@
 
 
 class ReplicationMapper {
+    ReplicationSearchStrategy strategy;
 public:
+    explicit ReplicationMapper(ReplicationSearchStrategy strategy)
+        : strategy(strategy)
+    {}
+
     ReplicationSolution get_task_mapping(System const& sys) const
     {
         std::vector<std::vector<Task*>> decomposition =
@@ -25,18 +30,27 @@ public:
         std::vector<DevicePair> device_pairs =
             device_pairs_from_platform(sys.get_platform());
 
-        size_t replication_count =
+        ReplicationSearchStats stats =
             EvaluateAllWithReplication::adapt_mapping(
                 mapping,
                 sys,
                 device_pairs,
-                decomposition
+                decomposition,
+                strategy
             );
+
+        size_t final_replica_count = 0;
+
+        for (Task* task : sys.get_task_graph().get_tasks()) {
+            final_replica_count += mapping.get_replicas(task).size() - 1;
+        }
 
         ReplicationSolution solution =
             ReplicationUtility::materialize_solution(sys, mapping);
 
-        solution.replication_count = replication_count;
+        solution.move_count = stats.move_count;
+        solution.replication_count = stats.replication_count;
+        solution.final_replica_count = final_replica_count;
 
         return solution;
     }
