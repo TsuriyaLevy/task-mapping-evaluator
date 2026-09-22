@@ -338,7 +338,9 @@ enum class MappingType {
 	ZhouLiu,
 	HEFT, PEFT,
 	SeriesParallelTwoPhaseReplication,
-	SeriesParallelInterleavedReplication
+	SeriesParallelInterleavedReplication,
+	SeriesParallelTwoPhaseReplicationFirstFit,
+	SeriesParallelInterleavedReplicationFirstFit
 };
 
 void run_mapping(std::string const& label, System const& system, Mapper const& mapper, TestRun& test_run, bool draw = true, bool enable_export = false) {
@@ -351,10 +353,10 @@ void run_mapping(std::string const& label, System const& system, Mapper const& m
 
 	std::cout << " finished!" << std::endl;
 
-    if (mapping.empty()) {
-        test_run.push_back({ label, std::numeric_limits<Time>::infinity(), std::chrono::milliseconds::max(), true });
-        return;
-    }
+	if (mapping.empty()) {
+		test_run.push_back({ label, std::numeric_limits<Time>::infinity(), std::chrono::milliseconds::max(), true });
+		return;
+	}
 
 	MappingEvaluator eval(system, true);
 	Time result = eval.evaluate_mapping_with_check(mapping, 1);
@@ -375,7 +377,8 @@ void run_mapping(std::string const& label, System const& system, Mapper const& m
 	test_run.push_back({ label, result, std::chrono::duration_cast<std::chrono::milliseconds>(end - begin), false });
 }
 
-void run_replication_mapping(std::string const& label, System const& system, ReplicationMapper const& mapper, TestRun& test_run, bool draw = true, bool enable_export = false)
+template <class EvaluationPolicy>
+void run_replication_mapping(std::string const& label, System const& system, ReplicationMapper<EvaluationPolicy> const& mapper, TestRun& test_run, bool draw = true, bool enable_export = false)
 {
 	std::cout << "Computing " << label << "...";
 
@@ -385,8 +388,7 @@ void run_replication_mapping(std::string const& label, System const& system, Rep
 
 	std::cout << " finished!" << std::endl;
 
-	ReplicationEvaluator eval(system, true);
-	Time result = eval.evaluate_mapping_with_check(solution.multi_mapping);
+	Time result = EvaluationPolicy::evaluate_mapping(solution.multi_mapping, system);
 
 	if (result == -1) {
 		std::cerr << "No mapping found for " << label << std::endl;
@@ -415,9 +417,63 @@ void run_replication_mapping(std::string const& label, System const& system, Rep
 		solution.move_count,
 		solution.replication_count,
 		solution.final_replica_count
-	});
+		});
 
 	return;
+}
+
+template <class EvaluationPolicy>
+void run_replication_mapping(
+	std::string const& label,
+	System const& system,
+	ReplicationMapper<EvaluationPolicy> const& mapper,
+	ReplicationDecomposition const& decomposition,
+	TestRun& test_run,
+	bool draw = true,
+	bool enable_export = false)
+{
+	std::cout << "Computing " << label << "...";
+
+	std::chrono::steady_clock::time_point begin =
+		std::chrono::steady_clock::now();
+
+	ReplicationSolution solution =
+		mapper.get_task_mapping(
+			system,
+			decomposition
+		);
+
+	std::chrono::steady_clock::time_point end =
+		std::chrono::steady_clock::now();
+
+	std::cout << " finished!" << std::endl;
+
+	Time result =
+		EvaluationPolicy::evaluate_mapping(
+			solution.multi_mapping,
+			system
+		);
+
+	if (result == -1) {
+		std::cerr
+			<< "No mapping found for "
+			<< label
+			<< std::endl;
+
+		return;
+	}
+
+	test_run.push_back({
+		label,
+		result,
+		std::chrono::duration_cast<
+			std::chrono::milliseconds
+		>(end - begin),
+		false,
+		solution.move_count,
+		solution.replication_count,
+		solution.final_replica_count
+		});
 }
 
 void run_mapping_with_schedule(std::string const& label, System const& system, TaskMapperWithSchedule const& mapper, TestRun& test_run, bool draw = true, bool enable_export = false) {
@@ -429,8 +485,8 @@ void run_mapping_with_schedule(std::string const& label, System const& system, T
 
 	std::cout << " finished!" << std::endl;
 
-	MappingEvaluator eval(system, true);	
-	
+	MappingEvaluator eval(system, true);
+
 	Task* dbg_task;
 	if (!eval.is_complete(mapping, &dbg_task)) {
 		std::cerr << "Mapping incomplete. Missing value for task " << dbg_task->get_label() << std::endl;
@@ -491,106 +547,323 @@ void run_mappings(System const& system, TestRun& test_run, std::vector<MappingTy
 		typedef SPDBase<EvaluationPolicy> BaseMappingPolicy;
 	};
 
-    auto run_func = [&](std::string const& label, Mapper const& mapper) {
-        run_mapping(label, system, mapper, test_run, draw_results, enable_export);
-    };
+	auto run_func = [&](std::string const& label, Mapper const& mapper) {
+		run_mapping(label, system, mapper, test_run, draw_results, enable_export);
+		};
 
-    for (MappingType const& mptype : selection) {
-        switch(mptype) {
-            case MappingType::CPU:
-                run_func("CPUMapping", GreedyMapper({ "CPU", "Main_RAM" }));
-                break;
-            case MappingType::GPU:
-                run_func("OnlyGPUMapping", GreedyMapper({ "GPU", "GPU_RAM", "CPU", "Main_RAM" }));
-                break;
-            case MappingType::FPGA:
-                run_func("OnlyFPGAMapping", GreedyMapper({ "FPGA", "FPGA_RAM", "CPU", "Main_RAM" }));
-                break;
-            case MappingType::SeriesParallel:
-                run_func("SeriesParallelMapping", SeriesParallelDecompositionMapper<BasePolicies>());
-                break;
-            case MappingType::SingleNode:
-                run_func("SingleNodeMapping", SingleNodeDecompositionMapper<BasePolicies>());
-                break;
-            case MappingType::SPThreshold:
-                run_func("SPThresholdMapping", SeriesParallelDecompositionMapper<ThresholdPolicy>());
-                break;
-            case MappingType::SNThreshold:
-                run_func("SNThresholdMapping", SingleNodeDecompositionMapper<ThresholdPolicy>());
-                break;
-            case MappingType::SPFirstFit:
-                run_func("SPFirstFitMapping", SeriesParallelDecompositionMapper<FirstFitPolicy>());
-                break;
-            case MappingType::SNFirstFit:
-                run_func("SNFirstFitMapping", SingleNodeDecompositionMapper<FirstFitPolicy>());
-                break;
-			case MappingType::SimulatedAnnealing:
-				run_func("SimulatedAnnealingMapping", SimulatedAnnealingMapper());
-				break;
-			case MappingType::NSGAII:
-				run_func("NSGAIIMapping", NSGAIIMapper());
-				break;
-			case MappingType::NSGAIISimple:
-				run_func("NSGAIIMappingSummed", NSGAIIMapper<SummedEvaluation>());
-				break;
-            case MappingType::HEFT:
-                run_func("HEFTMapping", HEFTMapper());
-                break;
-            case MappingType::PEFT:
-                run_func("PEFTMapping", PEFTMapper());
-                break;
-			case MappingType::SeriesParallelTwoPhaseReplication:
-				run_replication_mapping(
-					"SeriesParallelTwoPhaseReplicationMapping",
-					system,
-					ReplicationMapper(ReplicationSearchStrategy::TWO_PHASES),
-					test_run,
-					draw_results,
-					enable_export
-				);
-				break;
+	for (MappingType const& mptype : selection) {
+		switch (mptype) {
+		case MappingType::CPU:
+			run_func("CPUMapping", GreedyMapper({ "CPU", "Main_RAM" }));
+			break;
+		case MappingType::GPU:
+			run_func("OnlyGPUMapping", GreedyMapper({ "GPU", "GPU_RAM", "CPU", "Main_RAM" }));
+			break;
+		case MappingType::FPGA:
+			run_func("OnlyFPGAMapping", GreedyMapper({ "FPGA", "FPGA_RAM", "CPU", "Main_RAM" }));
+			break;
+		case MappingType::SeriesParallel:
+			run_func("SeriesParallelMapping", SeriesParallelDecompositionMapper<BasePolicies>());
+			break;
+		case MappingType::SingleNode:
+			run_func("SingleNodeMapping", SingleNodeDecompositionMapper<BasePolicies>());
+			break;
+		case MappingType::SPThreshold:
+			run_func("SPThresholdMapping", SeriesParallelDecompositionMapper<ThresholdPolicy>());
+			break;
+		case MappingType::SNThreshold:
+			run_func("SNThresholdMapping", SingleNodeDecompositionMapper<ThresholdPolicy>());
+			break;
+		case MappingType::SPFirstFit:
+			run_func("SPFirstFitMapping", SeriesParallelDecompositionMapper<FirstFitPolicy>());
+			break;
+		case MappingType::SNFirstFit:
+			run_func("SNFirstFitMapping", SingleNodeDecompositionMapper<FirstFitPolicy>());
+			break;
+		case MappingType::SimulatedAnnealing:
+			run_func("SimulatedAnnealingMapping", SimulatedAnnealingMapper());
+			break;
+		case MappingType::NSGAII:
+			run_func("NSGAIIMapping", NSGAIIMapper());
+			break;
+		case MappingType::NSGAIISimple:
+			run_func("NSGAIIMappingSummed", NSGAIIMapper<SummedEvaluation>());
+			break;
+		case MappingType::HEFT:
+			run_func("HEFTMapping", HEFTMapper());
+			break;
+		case MappingType::PEFT:
+			run_func("PEFTMapping", PEFTMapper());
+			break;
+		case MappingType::SeriesParallelTwoPhaseReplication:
+			run_replication_mapping(
+				"SeriesParallelTwoPhaseReplicationMapping",
+				system,
+				ReplicationMapper<EvaluateAllWithReplication>(ReplicationSearchStrategy::TWO_PHASES),
+				test_run,
+				draw_results,
+				enable_export
+			);
+			break;
 
-			case MappingType::SeriesParallelInterleavedReplication:
-				run_replication_mapping(
-					"SeriesParallelInterleavedReplicationMapping",
-					system,
-					ReplicationMapper(ReplicationSearchStrategy::INTERLEAVED),
-					test_run,
-					draw_results,
-					enable_export
-				);
-				break;
+		case MappingType::SeriesParallelInterleavedReplication:
+			run_replication_mapping(
+				"SeriesParallelInterleavedReplicationMapping",
+				system,
+				ReplicationMapper<EvaluateAllWithReplication>(ReplicationSearchStrategy::INTERLEAVED),
+				test_run,
+				draw_results,
+				enable_export
+			);
+			break;
+		case MappingType::SeriesParallelTwoPhaseReplicationFirstFit:
+			run_replication_mapping(
+				"SeriesParallelTwoPhaseReplicationFirstFitMapping",
+				system,
+				ReplicationMapper<EvaluateThresholdWithReplication<10>>(ReplicationSearchStrategy::TWO_PHASES),
+				test_run,
+				draw_results,
+				enable_export
+			);
+			break;
+
+		case MappingType::SeriesParallelInterleavedReplicationFirstFit:
+			run_replication_mapping(
+				"SeriesParallelInterleavedReplicationFirstFitMapping",
+				system,
+				ReplicationMapper<EvaluateThresholdWithReplication<10>>(ReplicationSearchStrategy::INTERLEAVED),
+				test_run,
+				draw_results,
+				enable_export
+			);
+			break;
 #ifdef ENABLE_GUROBI
-			case MappingType::ZhouLiu:
-				run_func("ZhouLiuMapping", ZhouLiuMILPMapper());
-				break;
-			case MappingType::DeviceMILP:
-				run_func("DeviceBasedMapping", DeviceBasedMILPMapper());
-				break;
-			case MappingType::TimeMILP:
-				run_func("TimeBasedMapping", TimeBasedMILPMapper());
-				break;
-			case MappingType::TimeMILPStream:
-				run_func("TimeBasedMappingStream", TimeBasedMILPMapper(true));
-				break;
+		case MappingType::ZhouLiu:
+			run_func("ZhouLiuMapping", ZhouLiuMILPMapper());
+			break;
+		case MappingType::DeviceMILP:
+			run_func("DeviceBasedMapping", DeviceBasedMILPMapper());
+			break;
+		case MappingType::TimeMILP:
+			run_func("TimeBasedMapping", TimeBasedMILPMapper());
+			break;
+		case MappingType::TimeMILPStream:
+			run_func("TimeBasedMappingStream", TimeBasedMILPMapper(true));
+			break;
 #else
-			case MappingType::ZhouLiu:
-			case MappingType::DeviceMILP:
-			case MappingType::TimeMILP:
-			case MappingType::TimeMILPStream:
-				std::cerr
-					<< "The selected MILP mapper requires a build with Gurobi support."
-					<< std::endl;
-				break;
+		case MappingType::ZhouLiu:
+		case MappingType::DeviceMILP:
+		case MappingType::TimeMILP:
+		case MappingType::TimeMILPStream:
+			std::cerr
+				<< "The selected MILP mapper requires a build with Gurobi support."
+				<< std::endl;
+			break;
 #endif
-        }
-    }
+		}
+	}
 
 	//run_mapping("PathBasedMapping", system, PathBasedMapper(), test_run, draw_results, enable_export);
    //run_mapping("TwoPhaseMapping", system, SingleNodeDecompositionMapper<TwoStagePolicies>(), test_run, draw_results, enable_export);
 	//run_mapping_with_schedule("HEFTMappingSchedule", system, HEFTMapper(), test_run, draw_results, enable_export);
 	//run_mapping_with_schedule("PEFTMappingSchedule", system, PEFTMapper(), test_run, draw_results, enable_export);
 }
+
+
+void run_shared_decomposition_mappings(
+	System const& system,
+	TestRun& test_run,
+	Decomposition const& decomposition,
+	bool draw_results = false,
+	bool enable_export = false)
+{
+	struct BasePolicies {
+		typedef EvaluateAll EvaluationPolicy;
+		typedef GreedyBase BaseMappingPolicy;
+	};
+
+	struct FirstFitPolicy {
+		typedef EvaluateThreshold<10> EvaluationPolicy;
+		typedef GreedyBase BaseMappingPolicy;
+	};
+
+
+	// ==========================================
+	// Original Series-Parallel
+	// ==========================================
+
+	{
+		std::cout
+			<< "Computing SeriesParallelMapping...";
+
+		std::chrono::steady_clock::time_point begin =
+			std::chrono::steady_clock::now();
+
+		Mapping mapping =
+			GreedyBase::create_base_mapping(system);
+
+		std::vector<DevicePair> device_pairs =
+			device_pairs_from_platform(
+				system.get_platform()
+			);
+
+		EvaluateAll::adapt_mapping(
+			mapping,
+			system,
+			device_pairs,
+			decomposition
+		);
+
+		std::chrono::steady_clock::time_point end =
+			std::chrono::steady_clock::now();
+
+		std::cout << " finished!" << std::endl;
+
+		MappingEvaluator eval(system, true);
+
+		Time result =
+			eval.evaluate_mapping_with_check(
+				mapping,
+				1
+			);
+
+		test_run.push_back({
+			"SeriesParallelMapping",
+			result,
+			std::chrono::duration_cast<
+				std::chrono::milliseconds
+			>(end - begin),
+			false
+			});
+	}
+
+
+	// ==========================================
+	// Original FirstFit
+	// ==========================================
+
+	{
+		std::cout
+			<< "Computing SPFirstFitMapping...";
+
+		std::chrono::steady_clock::time_point begin =
+			std::chrono::steady_clock::now();
+
+		Mapping mapping =
+			GreedyBase::create_base_mapping(system);
+
+		std::vector<DevicePair> device_pairs =
+			device_pairs_from_platform(
+				system.get_platform()
+			);
+
+		EvaluateThreshold<10>::adapt_mapping(
+			mapping,
+			system,
+			device_pairs,
+			decomposition
+		);
+
+		std::chrono::steady_clock::time_point end =
+			std::chrono::steady_clock::now();
+
+		std::cout << " finished!" << std::endl;
+
+		MappingEvaluator eval(system, true);
+
+		Time result =
+			eval.evaluate_mapping_with_check(
+				mapping,
+				1
+			);
+
+		test_run.push_back({
+			"SPFirstFitMapping",
+			result,
+			std::chrono::duration_cast<
+				std::chrono::milliseconds
+			>(end - begin),
+			false
+			});
+	}
+
+
+	// ==========================================
+	// Two-Phase Replication
+	// ==========================================
+
+	run_replication_mapping(
+		"SeriesParallelTwoPhaseReplicationMapping",
+		system,
+		ReplicationMapper<
+		EvaluateAllWithReplication
+		>(
+			ReplicationSearchStrategy::TWO_PHASES
+		),
+		decomposition,
+		test_run,
+		draw_results,
+		enable_export
+	);
+
+
+	// ==========================================
+	// Interleaved Replication
+	// ==========================================
+
+	run_replication_mapping(
+		"SeriesParallelInterleavedReplicationMapping",
+		system,
+		ReplicationMapper<
+		EvaluateAllWithReplication
+		>(
+			ReplicationSearchStrategy::INTERLEAVED
+		),
+		decomposition,
+		test_run,
+		draw_results,
+		enable_export
+	);
+
+
+	// ==========================================
+	// Two-Phase FirstFit Replication
+	// ==========================================
+
+	run_replication_mapping(
+		"SeriesParallelTwoPhaseReplicationFirstFitMapping",
+		system,
+		ReplicationMapper<
+		EvaluateThresholdWithReplication<10>
+		>(
+			ReplicationSearchStrategy::TWO_PHASES
+		),
+		decomposition,
+		test_run,
+		draw_results,
+		enable_export
+	);
+
+
+	// ==========================================
+	// Interleaved FirstFit Replication
+	// ==========================================
+
+	run_replication_mapping(
+		"SeriesParallelInterleavedReplicationFirstFitMapping",
+		system,
+		ReplicationMapper<
+		EvaluateThresholdWithReplication<10>
+		>(
+			ReplicationSearchStrategy::INTERLEAVED
+		),
+		decomposition,
+		test_run,
+		draw_results,
+		enable_export
+	);
+}
+
 
 //void run_default_mappings(System const& system, TestRun& test_run, bool draw_results, bool enable_export = false) {
 //    run_mappings(system, test_run, {MappingType::CPU, MappingType::SeriesParallel, MappingType::SPFirstFit, MappingType::SingleNode, MappingType::SNFirstFit, MappingType::SimulatedAnnealing, MappingType::NSGAII, MappingType::HEFT, MappingType::PEFT, MappingType::DeviceMILP}, draw_results, enable_export);

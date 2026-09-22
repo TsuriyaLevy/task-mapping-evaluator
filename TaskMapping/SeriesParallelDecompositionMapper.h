@@ -8,9 +8,14 @@
 template <class Policies> class SeriesParallelDecompositionMapper : public DecompositionMapper<Policies> {
 	bool map_single_tasks;
 public:
-	SeriesParallelDecompositionMapper(bool map_single_tasks = true): map_single_tasks(map_single_tasks) {}
+	SeriesParallelDecompositionMapper(bool map_single_tasks = true) : map_single_tasks(map_single_tasks) {}
+
+	Decomposition get_decomposition(TaskGraph const& task_graph) const
+	{
+		return create_decomposition(task_graph);
+	}
 protected:
-	Decomposition create_decomposition(TaskGraph const& task_graph) const {		
+	Decomposition create_decomposition(TaskGraph const& task_graph) const {
 		Decomposition decomposition;
 		SeriesParallelDecomposition spdtree(task_graph);
 #ifndef NDEBUG
@@ -42,7 +47,7 @@ private:
 		auto add_to_subgraph = [&subgraph, &subgraph_id](Task* const task) {
 			subgraph.push_back(task);
 			subgraph_id ^= std::hash<Task*>{}(task);
-		};
+			};
 
 		std::queue<SeriesParallelOperation const*> queue;
 		queue.push(op);
@@ -57,23 +62,23 @@ private:
 			SeriesParallelOperation const* curr_op = queue.front();
 			queue.pop();
 			switch (curr_op->get_type()) {
-				case SeriesParallelOperationType::EDGE:
-					break;
-				case SeriesParallelOperationType::PARALLEL:
-				case SeriesParallelOperationType::SERIES:
-					/* Map inner tasks */
-					Task* front = curr_op->get_front();
-					Task* back = curr_op->get_back();
-					for (SeriesParallelOperation const* inner_op : curr_op->get_elements()) {
-						if (inner_op->get_front() != front) {
-							add_to_subgraph(inner_op->get_front());
-						}
-						if (inner_op->get_back() != back) {
-							add_to_subgraph(inner_op->get_back());
-						}
-						queue.push(inner_op);
+			case SeriesParallelOperationType::EDGE:
+				break;
+			case SeriesParallelOperationType::PARALLEL:
+			case SeriesParallelOperationType::SERIES:
+				/* Map inner tasks */
+				Task* front = curr_op->get_front();
+				Task* back = curr_op->get_back();
+				for (SeriesParallelOperation const* inner_op : curr_op->get_elements()) {
+					if (inner_op->get_front() != front) {
+						add_to_subgraph(inner_op->get_front());
 					}
-					break;
+					if (inner_op->get_back() != back) {
+						add_to_subgraph(inner_op->get_back());
+					}
+					queue.push(inner_op);
+				}
+				break;
 			}
 		}
 

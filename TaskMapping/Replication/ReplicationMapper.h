@@ -12,6 +12,7 @@
 #include <queue>
 
 
+template <class EvaluationPolicy>
 class ReplicationMapper {
     ReplicationSearchStrategy strategy;
 public:
@@ -21,9 +22,16 @@ public:
 
     ReplicationSolution get_task_mapping(System const& sys) const
     {
-        std::vector<std::vector<Task*>> decomposition =
+        ReplicationDecomposition decomposition =
             create_decomposition(sys.get_task_graph());
 
+        return get_task_mapping(sys, decomposition);
+    }
+
+    ReplicationSolution get_task_mapping(
+        System const& sys,
+        ReplicationDecomposition const& decomposition) const
+    {
         MultiMapping mapping =
             MultiMappingBase::create_base_mapping(sys);
 
@@ -31,7 +39,7 @@ public:
             device_pairs_from_platform(sys.get_platform());
 
         ReplicationSearchStats stats =
-            EvaluateAllWithReplication::adapt_mapping(
+            EvaluationPolicy::adapt_mapping(
                 mapping,
                 sys,
                 device_pairs,
@@ -42,20 +50,30 @@ public:
         size_t final_replica_count = 0;
 
         for (Task* task : sys.get_task_graph().get_tasks()) {
-            final_replica_count += mapping.get_replicas(task).size() - 1;
+            size_t replica_count =
+                mapping.get_replicas(task).size();
+
+            if (replica_count > 1) {
+                final_replica_count +=
+                    replica_count - 1;
+            }
         }
 
         ReplicationSolution solution =
-            ReplicationUtility::materialize_solution(sys, mapping);
+            ReplicationUtility::materialize_solution(
+                sys,
+                mapping
+            );
 
+        solution.multi_mapping = mapping;
         solution.move_count = stats.move_count;
-        solution.replication_count = stats.replication_count;
-        solution.final_replica_count = final_replica_count;
+        solution.replication_count =
+            stats.replication_count;
+        solution.final_replica_count =
+            final_replica_count;
 
         return solution;
     }
-
-
 private:
     std::vector<std::vector<Task*>>
         create_decomposition(TaskGraph const& task_graph) const
