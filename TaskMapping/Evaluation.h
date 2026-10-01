@@ -10,6 +10,20 @@
 
 enum class SORTING_MODE { RANDOM, BREADTH_FIRST_SEARCH, TASK_FIRST_BFS, MAPPING_BASED };
 
+struct EvaluationBreakdown
+{
+	Time computation_work = 0;
+	Time processor_memory_communication_work = 0;
+	Time inter_task_communication_work = 0;
+	double inter_memory_data_mb = 0.0;
+
+	Time total_communication_work() const
+	{
+		return processor_memory_communication_work
+			+ inter_task_communication_work;
+	}
+};
+
 class MappingEvaluator {
 	System const& sys;
 	mutable EvaluationLog log;
@@ -25,7 +39,7 @@ class MappingEvaluator {
 public:
 	MappingEvaluator(System const& sys, bool log_results = false) : sys(sys), log_results(log_results) {}
 	~MappingEvaluator() { if (cached_sorting) delete cached_sorting; }
-	
+
 	EvaluationLog const& get_log() const { return log; }
 	System const& get_sys() const { return sys; }
 
@@ -69,28 +83,28 @@ public:
 
 	Time compute_cost(Mapping const& mapping, SORTING_MODE mode = SORTING_MODE::TASK_FIRST_BFS) const {
 
-        TopologicalSorting* sorting;
+		TopologicalSorting* sorting;
 
 		if (cached_sorting && cached_mode == mode) {
 			sorting = new CachedSorting(cached_sorting);
 		}
 		else {
 			switch (mode) {
-				case SORTING_MODE::RANDOM:
-					sorting = new RandomSorting(sys.get_task_graph());
-					break;
-				case SORTING_MODE::TASK_FIRST_BFS:
-					sorting = new TaskFirstBFSSorting(sys.get_task_graph());
-					set_cache(sorting, mode);
-					break;
-				case SORTING_MODE::MAPPING_BASED:
-					sorting = new MappingBasedSorting(sys, mapping);
-					break;
-				case SORTING_MODE::BREADTH_FIRST_SEARCH:
-					[[fallthrough]];
-				default:
-					sorting = new BFSSorting(sys.get_task_graph());
-					set_cache(sorting, mode);
+			case SORTING_MODE::RANDOM:
+				sorting = new RandomSorting(sys.get_task_graph());
+				break;
+			case SORTING_MODE::TASK_FIRST_BFS:
+				sorting = new TaskFirstBFSSorting(sys.get_task_graph());
+				set_cache(sorting, mode);
+				break;
+			case SORTING_MODE::MAPPING_BASED:
+				sorting = new MappingBasedSorting(sys, mapping);
+				break;
+			case SORTING_MODE::BREADTH_FIRST_SEARCH:
+				[[fallthrough]];
+			default:
+				sorting = new BFSSorting(sys.get_task_graph());
+				set_cache(sorting, mode);
 			}
 		}
 
@@ -107,8 +121,8 @@ public:
 
 		Time result = compute_cost_with_sorting(mapping, *sorting);
 
-        delete sorting;
-        sorting = nullptr;
+		delete sorting;
+		sorting = nullptr;
 
 		return result;
 	}
@@ -210,32 +224,82 @@ public:
 			return -1;
 		}
 
-        if (runs > 1) {
-            Time min_cost = std::numeric_limits<Time>::max();
-            EvaluationLog min_log;
+		if (runs > 1) {
+			Time min_cost = std::numeric_limits<Time>::max();
+			EvaluationLog min_log;
 
-            min_cost = compute_cost(mapping);
-            min_log = log;
+			min_cost = compute_cost(mapping);
+			min_log = log;
 
-            /*{
-                Time cost = compute_cost(mapping, SORTING_MODE::MAPPING_BASED);
-                if (cost < min_cost) {
-                    min_cost = cost;
-                    min_log = log;
-                }
-            }*/
+			/*{
+				Time cost = compute_cost(mapping, SORTING_MODE::MAPPING_BASED);
+				if (cost < min_cost) {
+					min_cost = cost;
+					min_log = log;
+				}
+			}*/
 
-            for (int i = 1; i < runs; ++i) {
-                Time cost = compute_cost(mapping, SORTING_MODE::RANDOM);
-                if (cost < min_cost) {
-                    min_cost = cost;
-                    min_log = log;
-                }
-            }
-            log = min_log;
-            return min_cost;
-        }
+			for (int i = 1; i < runs; ++i) {
+				Time cost = compute_cost(mapping, SORTING_MODE::RANDOM);
+				if (cost < min_cost) {
+					min_cost = cost;
+					min_log = log;
+				}
+			}
+			log = min_log;
+			return min_cost;
+		}
 
 		return compute_cost(mapping);
+	}
+
+	EvaluationBreakdown compute_breakdown(Mapping const& mapping) const
+	{
+		EvaluationBreakdown breakdown;
+
+		for (Task* task : sys.get_task_graph().get_tasks()) {
+			Processor const* processor = mapping.get_processor(task);
+			Memory const* mem_in = mapping.get_mem_in(task);
+			Memory const* mem_out = mapping.get_mem_out(task);
+
+			breakdown.computation_work +=
+				sys.computation_time_ms(task, processor);
+
+			breakdown.processor_memory_communication_work +=
+				sys.transaction_time_ms(
+					task->get_input_size(),
+					mem_in,
+					processor
+				);
+
+			breakdown.processor_memory_communication_work +=
+				sys.transaction_time_ms(
+					task->get_output_size(),
+					processor,
+					mem_out
+				);
+		}
+
+		for (Edge* edge : sys.get_task_graph().get_edges()) {
+			Task* source = edge->get_src();
+			Task* destination = edge->get_snk();
+
+			Memory const* mem_out = mapping.get_mem_out(source);
+			Memory const* mem_in = mapping.get_mem_in(destination);
+
+			breakdown.inter_task_communication_work +=
+				sys.transaction_time_ms(
+					source->get_output_size(),
+					mem_out,
+					mem_in
+				);
+
+			if (mem_out != mem_in) {
+				breakdown.inter_memory_data_mb +=
+					static_cast<double>(source->get_output_size());
+			}
+		}
+
+		return breakdown;
 	}
 };

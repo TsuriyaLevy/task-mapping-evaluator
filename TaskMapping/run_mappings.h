@@ -328,6 +328,17 @@
 #include <chrono>
 #include <unordered_set>
 
+struct SharedDecompositionFinalMappings
+{
+	Mapping original;
+	Mapping original_firstfit;
+	MultiMapping two_phase;
+	MultiMapping interleaved;
+	MultiMapping two_phase_firstfit;
+	MultiMapping interleaved_firstfit;
+};
+
+
 enum class MappingType {
 	CPU, GPU, FPGA,
 	SingleNode, SNThreshold, SNFirstFit,
@@ -430,7 +441,8 @@ void run_replication_mapping(
 	ReplicationDecomposition const& decomposition,
 	TestRun& test_run,
 	bool draw = true,
-	bool enable_export = false)
+	bool enable_export = false,
+	MultiMapping* final_mapping = nullptr)
 {
 	std::cout << "Computing " << label << "...";
 
@@ -463,7 +475,11 @@ void run_replication_mapping(
 		return;
 	}
 
-	test_run.push_back({
+	ReplicationEvaluator breakdown_evaluator(system);
+	EvaluationBreakdown breakdown =
+		breakdown_evaluator.compute_breakdown(solution.multi_mapping);
+
+	TestResult test_result{
 		label,
 		result,
 		std::chrono::duration_cast<
@@ -473,7 +489,23 @@ void run_replication_mapping(
 		solution.move_count,
 		solution.replication_count,
 		solution.final_replica_count
-		});
+	};
+
+	test_result.computation_work = breakdown.computation_work;
+	test_result.processor_memory_communication_work =
+		breakdown.processor_memory_communication_work;
+	test_result.inter_task_communication_work =
+		breakdown.inter_task_communication_work;
+	test_result.total_communication_work =
+		breakdown.total_communication_work();
+	test_result.inter_memory_data_mb =
+		breakdown.inter_memory_data_mb;
+
+	if (final_mapping != nullptr) {
+		*final_mapping = solution.multi_mapping;
+	}
+
+	test_run.push_back(test_result);
 }
 
 void run_mapping_with_schedule(std::string const& label, System const& system, TaskMapperWithSchedule const& mapper, TestRun& test_run, bool draw = true, bool enable_export = false) {
@@ -675,7 +707,8 @@ void run_shared_decomposition_mappings(
 	TestRun& test_run,
 	Decomposition const& decomposition,
 	bool draw_results = false,
-	bool enable_export = false)
+	bool enable_export = false,
+	SharedDecompositionFinalMappings* final_mappings = nullptr)
 {
 	struct BasePolicies {
 		typedef EvaluateAll EvaluationPolicy;
@@ -727,14 +760,33 @@ void run_shared_decomposition_mappings(
 				1
 			);
 
-		test_run.push_back({
+		EvaluationBreakdown breakdown =
+			eval.compute_breakdown(mapping);
+
+		TestResult test_result{
 			"SeriesParallelMapping",
 			result,
 			std::chrono::duration_cast<
 				std::chrono::milliseconds
 			>(end - begin),
 			false
-			});
+		};
+
+		test_result.computation_work = breakdown.computation_work;
+		test_result.processor_memory_communication_work =
+			breakdown.processor_memory_communication_work;
+		test_result.inter_task_communication_work =
+			breakdown.inter_task_communication_work;
+		test_result.total_communication_work =
+			breakdown.total_communication_work();
+		test_result.inter_memory_data_mb =
+			breakdown.inter_memory_data_mb;
+
+		if (final_mappings != nullptr) {
+			final_mappings->original = mapping;
+		}
+
+		test_run.push_back(test_result);
 	}
 
 
@@ -777,14 +829,33 @@ void run_shared_decomposition_mappings(
 				1
 			);
 
-		test_run.push_back({
+		EvaluationBreakdown breakdown =
+			eval.compute_breakdown(mapping);
+
+		TestResult test_result{
 			"SPFirstFitMapping",
 			result,
 			std::chrono::duration_cast<
 				std::chrono::milliseconds
 			>(end - begin),
 			false
-			});
+		};
+
+		test_result.computation_work = breakdown.computation_work;
+		test_result.processor_memory_communication_work =
+			breakdown.processor_memory_communication_work;
+		test_result.inter_task_communication_work =
+			breakdown.inter_task_communication_work;
+		test_result.total_communication_work =
+			breakdown.total_communication_work();
+		test_result.inter_memory_data_mb =
+			breakdown.inter_memory_data_mb;
+
+		if (final_mappings != nullptr) {
+			final_mappings->original_firstfit = mapping;
+		}
+
+		test_run.push_back(test_result);
 	}
 
 
@@ -803,7 +874,8 @@ void run_shared_decomposition_mappings(
 		decomposition,
 		test_run,
 		draw_results,
-		enable_export
+		enable_export,
+		final_mappings != nullptr ? &final_mappings->two_phase : nullptr
 	);
 
 
@@ -822,7 +894,8 @@ void run_shared_decomposition_mappings(
 		decomposition,
 		test_run,
 		draw_results,
-		enable_export
+		enable_export,
+		final_mappings != nullptr ? &final_mappings->interleaved : nullptr
 	);
 
 
@@ -841,7 +914,8 @@ void run_shared_decomposition_mappings(
 		decomposition,
 		test_run,
 		draw_results,
-		enable_export
+		enable_export,
+		final_mappings != nullptr ? &final_mappings->two_phase_firstfit : nullptr
 	);
 
 
@@ -860,7 +934,8 @@ void run_shared_decomposition_mappings(
 		decomposition,
 		test_run,
 		draw_results,
-		enable_export
+		enable_export,
+		final_mappings != nullptr ? &final_mappings->interleaved_firstfit : nullptr
 	);
 }
 

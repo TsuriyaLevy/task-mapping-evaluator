@@ -64,12 +64,253 @@
 
 #include <fstream>
 #include <cmath>
+#include <filesystem>
+#include <unordered_map>
+#include <iomanip>
+#include <sstream>
+
 
 struct BasePoliciesForSharedDecomposition
 {
     typedef EvaluateAll EvaluationPolicy;
     typedef GreedyBase BaseMappingPolicy;
 };
+
+
+std::string augmentation_folder_name(double augmentation_ratio)
+{
+    std::ostringstream stream;
+    stream << "aug_" << static_cast<int>(std::round(augmentation_ratio * 100.0));
+    return stream.str();
+}
+
+
+std::string run_folder_name(int run)
+{
+    std::ostringstream stream;
+    stream << "run_" << std::setw(2) << std::setfill('0') << (run + 1);
+    return stream.str();
+}
+
+
+std::unordered_map<Task*, size_t> build_task_ids(TaskGraph const& graph)
+{
+    std::unordered_map<Task*, size_t> task_ids;
+
+    std::vector<Task*> const& tasks = graph.get_tasks();
+
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        task_ids[tasks[i]] = i;
+    }
+
+    return task_ids;
+}
+
+
+void save_graph(
+    TaskGraph const& graph,
+    std::filesystem::path const& directory)
+{
+    std::filesystem::create_directories(directory);
+
+    std::unordered_map<Task*, size_t> task_ids =
+        build_task_ids(graph);
+
+    std::ofstream tasks_file(directory / "tasks.csv");
+    tasks_file
+        << "task_id,complexity,parallelizability,streamability,"
+        << "area_requirement,input_size_mb,output_size_mb\n";
+
+    for (Task* task : graph.get_tasks()) {
+        tasks_file
+            << task_ids.at(task) << ","
+            << task->get_complexity() << ","
+            << task->get_parallelizability() << ","
+            << task->get_streamability() << ","
+            << task->get_area_requirement() << ","
+            << task->get_input_size() << ","
+            << task->get_output_size()
+            << "\n";
+    }
+
+    std::ofstream edges_file(directory / "edges.csv");
+    edges_file << "source_task_id,destination_task_id\n";
+
+    for (Edge* edge : graph.get_edges()) {
+        edges_file
+            << task_ids.at(edge->get_src()) << ","
+            << task_ids.at(edge->get_snk())
+            << "\n";
+    }
+}
+
+
+void save_mapping(
+    TaskGraph const& graph,
+    Mapping const& mapping,
+    std::filesystem::path const& filename)
+{
+    std::unordered_map<Task*, size_t> task_ids =
+        build_task_ids(graph);
+
+    std::ofstream file(filename);
+    file << "task_id,processor,input_memory,output_memory\n";
+
+    for (Task* task : graph.get_tasks()) {
+        Processor const* processor = mapping.get_processor(task);
+        Memory const* mem_in = mapping.get_mem_in(task);
+        Memory const* mem_out = mapping.get_mem_out(task);
+
+        file
+            << task_ids.at(task) << ","
+            << (processor != nullptr ? processor->get_label() : "") << ","
+            << (mem_in != nullptr ? mem_in->get_label() : "") << ","
+            << (mem_out != nullptr ? mem_out->get_label() : "")
+            << "\n";
+    }
+}
+
+
+void save_multi_mapping(
+    TaskGraph const& graph,
+    MultiMapping const& mapping,
+    std::filesystem::path const& filename)
+{
+    std::unordered_map<Task*, size_t> task_ids =
+        build_task_ids(graph);
+
+    std::ofstream file(filename);
+    file << "task_id,replica_index,processor,input_memory,output_memory\n";
+
+    for (Task* task : graph.get_tasks()) {
+        size_t replica_index = 0;
+
+        for (auto const& replica : mapping.get_replicas(task)) {
+            file
+                << task_ids.at(task) << ","
+                << replica_index++ << ","
+                << replica.processor->get_label() << ","
+                << replica.memory_in->get_label() << ","
+                << replica.memory_out->get_label()
+                << "\n";
+        }
+    }
+}
+
+
+void save_edge_case_metadata(
+    std::filesystem::path const& directory,
+    int size,
+    int run,
+    double augmentation_ratio,
+    size_t requested_loose_edges,
+    std::string const& comparison,
+    double improvement,
+    TestResult const& baseline,
+    TestResult const& replication)
+{
+    std::ofstream file(directory / "metadata.csv");
+
+    file
+        << "graph_size,run,augmentation_ratio,requested_loose_edges,"
+        << "comparison,improvement,baseline_objective,replication_objective\n";
+
+    file
+        << size << ","
+        << run + 1 << ","
+        << augmentation_ratio << ","
+        << requested_loose_edges << ","
+        << comparison << ","
+        << improvement << ","
+        << baseline.objective << ","
+        << replication.objective
+        << "\n";
+}
+
+
+void save_edge_case(
+    TaskGraph const& graph,
+    std::filesystem::path const& edge_cases_root,
+    int size,
+    int run,
+    double augmentation_ratio,
+    size_t requested_loose_edges,
+    std::string const& comparison,
+    double improvement,
+    TestResult const& baseline_result,
+    TestResult const& replication_result,
+    Mapping const& baseline_mapping,
+    MultiMapping const& replication_mapping)
+{
+    std::string direction =
+        improvement > 0.0 ? "positive" : "negative";
+
+    std::filesystem::path directory =
+        edge_cases_root
+        / direction
+        / ("size_" + std::to_string(size))
+        / augmentation_folder_name(augmentation_ratio)
+        / run_folder_name(run)
+        / comparison;
+
+    std::filesystem::create_directories(directory);
+
+    save_graph(graph, directory);
+    save_mapping(
+        graph,
+        baseline_mapping,
+        directory / "baseline_mapping.csv"
+    );
+    save_multi_mapping(
+        graph,
+        replication_mapping,
+        directory / "replication_mapping.csv"
+    );
+
+    save_edge_case_metadata(
+        directory,
+        size,
+        run,
+        augmentation_ratio,
+        requested_loose_edges,
+        comparison,
+        improvement,
+        baseline_result,
+        replication_result
+    );
+}
+
+
+void write_breakdown_header(
+    std::ofstream& csv,
+    std::string const& prefix)
+{
+    csv
+        << prefix << "_computation_work,"
+        << prefix << "_processor_memory_communication_work,"
+        << prefix << "_inter_task_communication_work,"
+        << prefix << "_total_communication_work,"
+        << prefix << "_inter_memory_data_mb,";
+}
+
+
+void write_breakdown(
+    std::ofstream& csv,
+    TestResult const& result,
+    bool trailing_comma = true)
+{
+    csv
+        << result.computation_work << ","
+        << result.processor_memory_communication_work << ","
+        << result.inter_task_communication_work << ","
+        << result.total_communication_work << ","
+        << result.inter_memory_data_mb;
+
+    if (trailing_comma) {
+        csv << ",";
+    }
+}
+
 
 int main()
 {
@@ -81,7 +322,25 @@ int main()
     const int TO = 350;
     const int RUNS = 10;
 
-    const std::vector<double> AUGMENTATION_RATIOS = { 0.00, 0.05, 0.10, 0.20 };
+    const double EDGE_CASE_THRESHOLD = 0.10;
+
+    const std::vector<double> AUGMENTATION_RATIOS =
+    { 0.00, 0.05, 0.10, 0.20 };
+
+    const std::filesystem::path OUTPUT_ROOT =
+        "replication_experiment_detailed";
+
+    const std::filesystem::path GRAPHS_ROOT =
+        OUTPUT_ROOT / "graphs";
+
+    const std::filesystem::path EDGE_CASES_ROOT =
+        OUTPUT_ROOT / "edge_cases";
+
+    const std::filesystem::path RESULTS_FILE =
+        OUTPUT_ROOT / "replication_experiment_detailed.csv";
+
+    std::filesystem::create_directories(GRAPHS_ROOT);
+    std::filesystem::create_directories(EDGE_CASES_ROOT);
 
     srand(SEED);
 
@@ -96,7 +355,7 @@ int main()
 
     std::vector<TestRun> all_results;
 
-    std::ofstream csv("augmented_graph_results.csv");
+    std::ofstream csv(RESULTS_FILE);
 
     csv
         << "graph_size,"
@@ -106,8 +365,13 @@ int main()
 
         << "original_objective,"
         << "two_phase_objective,"
-        << "interleaved_objective,"
+        << "interleaved_objective,";
 
+    write_breakdown_header(csv, "original");
+    write_breakdown_header(csv, "two_phase");
+    write_breakdown_header(csv, "interleaved");
+
+    csv
         << "two_phase_improvement_vs_original,"
         << "interleaved_improvement_vs_original,"
 
@@ -130,8 +394,13 @@ int main()
 
         << "original_firstfit_objective,"
         << "two_phase_firstfit_objective,"
-        << "interleaved_firstfit_objective,"
+        << "interleaved_firstfit_objective,";
 
+    write_breakdown_header(csv, "original_firstfit");
+    write_breakdown_header(csv, "two_phase_firstfit");
+    write_breakdown_header(csv, "interleaved_firstfit");
+
+    csv
         << "original_firstfit_improvement_vs_original,"
         << "two_phase_firstfit_improvement_vs_original,"
         << "interleaved_firstfit_improvement_vs_original,"
@@ -171,18 +440,24 @@ int main()
         for (double augmentation_ratio : AUGMENTATION_RATIOS) {
 
             size_t requested_loose_edges =
-                static_cast<size_t>(std::ceil(size * augmentation_ratio));
+                static_cast<size_t>(
+                    std::ceil(size * augmentation_ratio)
+                    );
 
-            if (requested_loose_edges == 0 && augmentation_ratio != 0.0) {
+            if (requested_loose_edges == 0 &&
+                augmentation_ratio != 0.0)
+            {
                 requested_loose_edges = 1;
             }
 
             std::cout
                 << "Graph size: " << size
-                << ", requested loose edges: " << requested_loose_edges
+                << ", requested loose edges: "
+                << requested_loose_edges
                 << std::endl;
 
             for (int run = 0; run < RUNS; ++run) {
+
                 if (augmentation_ratio == 0.0) {
                     system.replace_graph(
                         generate_random_series_parallel_graph(
@@ -201,6 +476,20 @@ int main()
                     );
                 }
 
+                TaskGraph const& graph =
+                    system.get_task_graph();
+
+                std::filesystem::path graph_directory =
+                    GRAPHS_ROOT
+                    / ("size_" + std::to_string(size))
+                    / augmentation_folder_name(augmentation_ratio)
+                    / run_folder_name(run);
+
+                save_graph(
+                    graph,
+                    graph_directory
+                );
+
                 TestRun test_run;
 
                 SeriesParallelDecompositionMapper<
@@ -209,15 +498,18 @@ int main()
 
                 Decomposition decomposition =
                     decomposition_mapper.get_decomposition(
-                        system.get_task_graph()
+                        graph
                     );
+
+                SharedDecompositionFinalMappings final_mappings;
 
                 run_shared_decomposition_mappings(
                     system,
                     test_run,
                     decomposition,
                     false,
-                    false
+                    false,
+                    &final_mappings
                 );
 
 
@@ -319,10 +611,14 @@ int main()
 
 
                     double original_runtime =
-                        static_cast<double>(original->runtime_ms.count());
+                        static_cast<double>(
+                            original->runtime_ms.count()
+                            );
 
                     double original_firstfit_runtime =
-                        static_cast<double>(original_firstfit->runtime_ms.count());
+                        static_cast<double>(
+                            original_firstfit->runtime_ms.count()
+                            );
 
 
                     double two_phase_runtime_ratio_vs_original = 0.0;
@@ -395,8 +691,13 @@ int main()
 
                         << original->objective << ","
                         << two_phase->objective << ","
-                        << interleaved->objective << ","
+                        << interleaved->objective << ",";
 
+                    write_breakdown(csv, *original);
+                    write_breakdown(csv, *two_phase);
+                    write_breakdown(csv, *interleaved);
+
+                    csv
                         << two_phase_improvement_vs_original << ","
                         << interleaved_improvement_vs_original << ","
 
@@ -419,8 +720,13 @@ int main()
 
                         << original_firstfit->objective << ","
                         << two_phase_firstfit->objective << ","
-                        << interleaved_firstfit->objective << ","
+                        << interleaved_firstfit->objective << ",";
 
+                    write_breakdown(csv, *original_firstfit);
+                    write_breakdown(csv, *two_phase_firstfit);
+                    write_breakdown(csv, *interleaved_firstfit);
+
+                    csv
                         << original_firstfit_improvement_vs_original << ","
                         << two_phase_firstfit_improvement_vs_original << ","
                         << interleaved_firstfit_improvement_vs_original << ","
@@ -450,9 +756,90 @@ int main()
                         << "\n";
 
                     csv.flush();
+
+
+                    if (std::abs(two_phase_improvement_vs_original) >
+                        EDGE_CASE_THRESHOLD)
+                    {
+                        save_edge_case(
+                            graph,
+                            EDGE_CASES_ROOT,
+                            size,
+                            run,
+                            augmentation_ratio,
+                            requested_loose_edges,
+                            "two_phase_vs_original",
+                            two_phase_improvement_vs_original,
+                            *original,
+                            *two_phase,
+                            final_mappings.original,
+                            final_mappings.two_phase
+                        );
+                    }
+
+                    if (std::abs(interleaved_improvement_vs_original) >
+                        EDGE_CASE_THRESHOLD)
+                    {
+                        save_edge_case(
+                            graph,
+                            EDGE_CASES_ROOT,
+                            size,
+                            run,
+                            augmentation_ratio,
+                            requested_loose_edges,
+                            "interleaved_vs_original",
+                            interleaved_improvement_vs_original,
+                            *original,
+                            *interleaved,
+                            final_mappings.original,
+                            final_mappings.interleaved
+                        );
+                    }
+
+                    if (std::abs(
+                        two_phase_firstfit_improvement_vs_original_firstfit
+                    ) > EDGE_CASE_THRESHOLD)
+                    {
+                        save_edge_case(
+                            graph,
+                            EDGE_CASES_ROOT,
+                            size,
+                            run,
+                            augmentation_ratio,
+                            requested_loose_edges,
+                            "two_phase_firstfit_vs_original_firstfit",
+                            two_phase_firstfit_improvement_vs_original_firstfit,
+                            *original_firstfit,
+                            *two_phase_firstfit,
+                            final_mappings.original_firstfit,
+                            final_mappings.two_phase_firstfit
+                        );
+                    }
+
+                    if (std::abs(
+                        interleaved_firstfit_improvement_vs_original_firstfit
+                    ) > EDGE_CASE_THRESHOLD)
+                    {
+                        save_edge_case(
+                            graph,
+                            EDGE_CASES_ROOT,
+                            size,
+                            run,
+                            augmentation_ratio,
+                            requested_loose_edges,
+                            "interleaved_firstfit_vs_original_firstfit",
+                            interleaved_firstfit_improvement_vs_original_firstfit,
+                            *original_firstfit,
+                            *interleaved_firstfit,
+                            final_mappings.original_firstfit,
+                            final_mappings.interleaved_firstfit
+                        );
+                    }
                 }
 
-                all_results.push_back(std::move(test_run));
+                all_results.push_back(
+                    std::move(test_run)
+                );
             }
         }
     }
@@ -461,7 +848,20 @@ int main()
     csv.close();
 
     std::cout << std::endl;
-    std::cout << "Results saved to augmented_graph_results.csv" << std::endl;
+    std::cout
+        << "Results saved to "
+        << RESULTS_FILE.string()
+        << std::endl;
+
+    std::cout
+        << "Graphs saved to "
+        << GRAPHS_ROOT.string()
+        << std::endl;
+
+    std::cout
+        << "Edge cases saved to "
+        << EDGE_CASES_ROOT.string()
+        << std::endl;
 
     std::cout << std::endl;
     std::cout << "======================================" << std::endl;

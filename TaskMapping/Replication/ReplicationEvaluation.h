@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../System.h"
+#include "../Evaluation.h"
 #include "../EvaluationLog.h"
 
 #include "MultiMapping.h"
@@ -425,5 +426,90 @@ public:
         }
 
         return compute_cost(mapping);
+    }
+
+    EvaluationBreakdown compute_breakdown(MultiMapping const& mapping)
+    {
+        // Run the evaluator first so that chosen_sources contains
+        // the actual source replica selected for every dependency.
+        compute_cost(mapping);
+
+        EvaluationBreakdown breakdown;
+
+        // Computation and processor-memory communication:
+        // every replica actually performs the task.
+        for (Task* task : sys.get_task_graph().get_tasks()) {
+            for (auto const& replica : mapping.get_replicas(task)) {
+                breakdown.computation_work +=
+                    sys.computation_time_ms(
+                        task,
+                        replica.processor
+                    );
+
+                breakdown.processor_memory_communication_work +=
+                    sys.transaction_time_ms(
+                        task->get_input_size(),
+                        replica.memory_in,
+                        replica.processor
+                    );
+
+                breakdown.processor_memory_communication_work +=
+                    sys.transaction_time_ms(
+                        task->get_output_size(),
+                        replica.processor,
+                        replica.memory_out
+                    );
+            }
+        }
+
+        // Inter-task communication:
+        // one selected source replica for every destination replica.
+        for (Edge* edge : sys.get_task_graph().get_edges()) {
+            Task* source = edge->get_src();
+            Task* destination = edge->get_snk();
+
+            for (auto const& destination_replica :
+                mapping.get_replicas(destination)) {
+
+                Processor const* source_processor =
+                    get_chosen_source(
+                        destination,
+                        destination_replica.processor,
+                        source
+                    );
+
+                assert(source_processor != nullptr);
+
+                auto const* source_replica =
+                    mapping.get_replica(
+                        source,
+                        source_processor
+                    );
+
+                assert(source_replica != nullptr);
+
+                Memory const* mem_out =
+                    source_replica->memory_out;
+
+                Memory const* mem_in =
+                    destination_replica.memory_in;
+
+                breakdown.inter_task_communication_work +=
+                    sys.transaction_time_ms(
+                        source->get_output_size(),
+                        mem_out,
+                        mem_in
+                    );
+
+                if (mem_out != mem_in) {
+                    breakdown.inter_memory_data_mb +=
+                        static_cast<double>(
+                            source->get_output_size()
+                            );
+                }
+            }
+        }
+
+        return breakdown;
     }
 };
